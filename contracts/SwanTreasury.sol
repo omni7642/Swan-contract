@@ -9,19 +9,20 @@ contract SwanTreasury {
 
     address public partner;
     address private swanTrader;
-    address public principalToken;
-    address public targetToken;
+    address public tokenA;
+    address public tokenB;
 
     uint256 public epochDuration;
     uint256 public epochStart;
 
-    uint256 public totalDeposit;
-    uint256 public currentPreInformedAmount;
-    uint256 public lastPreInformedTime;
+    uint256 public reserveA;
+    uint256 public reserveB;
+    uint256 public currentPreInformedAmountA;
+    uint256 public currentPreInformedAmountB;
 
-    event Deposite(uint256 amount);
-    event PreInform(uint256 amount);
-    event WithDraw(uint256 amount);
+    event Deposite(address token, uint256 amount);
+    event PreInform(address token, uint256 amount);
+    event WithDraw(address token, uint256 amount);
 
     constructor() {
         // this ensures that the base contract cannot be initialized
@@ -55,8 +56,8 @@ contract SwanTreasury {
     function initialize(
         address _partner,
         address _swanTrader,
-        address _principalToken,
-        address _targetToken,
+        address _tokenA,
+        address _tokenB,
         uint256 _epochDuration,
         uint256 _epochStart
     ) external {
@@ -70,34 +71,57 @@ contract SwanTreasury {
             isInitialized == false,
             "ERROR: This is already isInitialized. redo is not allowed"
         );
-        principalToken = _principalToken;
+        tokenA = _tokenA;
         partner = _partner;
-        targetToken = _targetToken;
+        tokenB = _tokenB;
         swanTrader = _swanTrader;
         epochDuration = _epochDuration;
         epochStart = _epochStart;
         isInitialized = true;
     }
 
-    function deposite(uint256 _amount) external onlyPartner {
-        IERC20(principalToken).transferFrom(msg.sender, address(this), _amount);
-        totalDeposit = totalDeposit + _amount;
-        emit Deposite(_amount);
+    function deposite(uint256 _amountA, uint256 _amountB) external onlyPartner {
+        IERC20(tokenA).transferFrom(msg.sender, address(this), _amountA);
+        IERC20(tokenB).transferFrom(msg.sender, address(this), _amountB);
+        if (_amountA > 0) {
+            reserveA = reserveA + _amountA;
+        }
+        if (_amountB > 0) {
+            reserveB = reserveB + _amountB;
+        }
+        emit Deposite(tokenA, _amountA);
+        emit Deposite(tokenB, _amountB);
     }
 
-    function preInform(uint256 _amount) external onlyPartner isInformable {
-        currentPreInformedAmount = currentPreInformedAmount + _amount;
-        emit PreInform(_amount);
+    function preInform(uint256 _amountA, uint256 _amountB)
+        external
+        onlyPartner
+        isInformable
+    {
+        if (_amountA > 0) {
+            currentPreInformedAmountA = currentPreInformedAmountA + _amountA;
+        }
+        if (_amountB > 0) {
+            currentPreInformedAmountB = currentPreInformedAmountB + _amountB;
+        }
+        emit PreInform(tokenA, _amountA);
+        emit PreInform(tokenB, _amountB);
     }
 
-    function withDraw() external onlyPartner {
-        require(currentPreInformedAmount > 0, "Error: you didn't preInformed");
-        IERC20(principalToken).transferFrom(
-            address(this),
-            partner,
-            currentPreInformedAmount
-        );
-        emit WithDraw(currentPreInformedAmount);
+    function withDraw(uint256 amountA, uint256 amountB) external onlyPartner {
+        if (amountA > 0) {
+            require(amountA <= currentPreInformedAmountA, "ERR: amount exceed");
+            IERC20(tokenA).transferFrom(address(this), partner, amountA);
+            reserveA = reserveA - amountA;
+            currentPreInformedAmountA = currentPreInformedAmountA - amountA;
+        }
+        if (amountB > 0) {
+            require(amountB <= currentPreInformedAmountB, "ERR: amount exceed");
+            IERC20(tokenB).transferFrom(address(this), partner, amountB);
+            currentPreInformedAmountB = currentPreInformedAmountB - amountB;
+        }
+        emit WithDraw(tokenA, amountA);
+        emit WithDraw(tokenB, amountB);
     }
 
     function trade(

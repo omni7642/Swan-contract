@@ -5,8 +5,8 @@ interface ISwanTreasury {
     function initialize(
         address _partner,
         address _swanTrader,
-        address _principalToken,
-        address _targetToken,
+        address _tokenA,
+        address _tokenB,
         uint256 _epochDuration,
         uint256 _epochStart
     ) external;
