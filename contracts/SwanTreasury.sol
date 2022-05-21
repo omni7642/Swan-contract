@@ -1,7 +1,9 @@
 //SPDX-License-Identifier: Unlicense
 pragma solidity ^0.8.0;
 
+import "@uniswap/v3-periphery/contracts/libraries/TransferHelper.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "./interfaces/ISwapRouter.sol";
 
 contract SwanTreasury {
     bool public isBase;
@@ -11,6 +13,8 @@ contract SwanTreasury {
     address private swanTrader;
     address public tokenA;
     address public tokenB;
+    address public pool;
+    uint24 public poolFee;
 
     uint256 public epochDuration;
     uint256 public epochStart;
@@ -20,9 +24,12 @@ contract SwanTreasury {
     uint256 public currentPreInformedAmountA;
     uint256 public currentPreInformedAmountB;
 
+    // address public uniSwapRouter = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
+
     event Deposite(address token, uint256 amount);
     event PreInform(address token, uint256 amount);
     event WithDraw(address token, uint256 amount);
+    event UniswapV3Swap(ISwapRouter.ExactInputSingleParams params);
 
     constructor() {
         // this ensures that the base contract cannot be initialized
@@ -58,6 +65,8 @@ contract SwanTreasury {
         address _swanTrader,
         address _tokenA,
         address _tokenB,
+        address _pool,
+        uint24 _poolFee,
         uint256 _epochDuration,
         uint256 _epochStart
     ) external {
@@ -74,6 +83,8 @@ contract SwanTreasury {
         tokenA = _tokenA;
         partner = _partner;
         tokenB = _tokenB;
+        pool = _pool;
+        poolFee = _poolFee;
         swanTrader = _swanTrader;
         epochDuration = _epochDuration;
         epochStart = _epochStart;
@@ -124,6 +135,7 @@ contract SwanTreasury {
         emit WithDraw(tokenB, amountB);
     }
 
+    /// @notice just for general purposes, not use really
     function trade(
         address targetContract,
         uint256 amount,
@@ -131,5 +143,27 @@ contract SwanTreasury {
     ) external onlyTrader {
         (bool success, bytes memory data) = targetContract.call(data);
         require(success, "trade failed");
+    }
+
+    /// @notice uniswap v3 swap trigger
+    function uniswapv3(
+        address uniSwapRouter,
+        address tokenIn,
+        uint256 amountIn
+    ) external onlyTrader {
+        IERC20(tokenIn).approve(uniSwapRouter, amountIn);
+        ISwapRouter.ExactInputSingleParams memory params = ISwapRouter
+            .ExactInputSingleParams({
+                tokenIn: tokenIn,
+                tokenOut: tokenIn == tokenA ? tokenB : tokenA,
+                fee: poolFee,
+                recipient: address(this),
+                deadline: block.timestamp,
+                amountIn: amountIn,
+                amountOutMinimum: 0,
+                sqrtPriceLimitX96: 0
+            });
+        ISwapRouter(uniSwapRouter).exactInputSingle(params);
+        emit UniswapV3Swap(params);
     }
 }
