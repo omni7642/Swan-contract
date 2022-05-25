@@ -31,7 +31,7 @@ describe("Greeter", function () {
       await SwanFactory.launchCustomTreasury(
         tokenA.address,
         tokenB.address,
-        tokenA.address
+        3000
       )
     ).wait();
     console.log("t = ", t?.events && t?.events[0]?.args);
@@ -42,5 +42,13 @@ describe("Greeter", function () {
       "SwanTreasury",
       customTreasuryInfo.customTreasury
     );
+    console.log("approving ... ");
+    await (await tokenA.approve(customTreasuryInfo.customTreasury, 100)).wait();
+    await (await tokenB.approve(customTreasuryInfo.customTreasury, 100)).wait();
+
+    console.log("depositing ... ");
+    await (await customSwanTreasury.deposite(100, 100)).wait();
+    console.log("updating ... ");
+    await (await customSwanTreasury.update()).wait();
   });
 });

@@ -30,7 +30,6 @@ contract SwanFactory is Ownable {
         address customTreasury; // newly deployed custom treasury contract address
         address tokenA; // the principal token the partners deposit
         address tokenB; // the target token the swan trader should trade for
-        address pool; // the tokenA/tokenB pool address
     }
 
     /// @notice sets the target swanTreasury contract address
@@ -73,15 +72,13 @@ contract SwanFactory is Ownable {
     function launchCustomTreasury(
         address tokenA,
         address tokenB,
-        address pool,
         uint24 poolFee
     ) external returns (address) {
         address customTreasury = _clone(swanTreasuryTarget);
         TreasuryInfo memory newInfo = TreasuryInfo(
             customTreasury,
             tokenA,
-            tokenB,
-            pool
+            tokenB
         );
         allClones[msg.sender].push(newInfo);
         ISwanTreasury(customTreasury).initialize(
@@ -89,7 +86,6 @@ contract SwanFactory is Ownable {
             swanTrader,
             tokenA,
             tokenB,
-            pool,
             poolFee,
             epochDuration,
             epochStart

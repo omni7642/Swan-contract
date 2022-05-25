@@ -26,68 +26,21 @@ async function main() {
   // constants
   const UniswapV3FactoryAddress = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
   const positionManagerAddress = "0xC36442b4a4522E871399CD717aBDD847Ab11FE88";
-  const token0Address = "0x8950155745835259aaa77fece3826fe2fad882dc";
-  const token1Address = "0xefadadb15be5bb1113da5f6c34f47ef5e30bbac4";
-  const poolAddress = "0x8a853ae9b9454c96c24f8ea5079fdb78f8291b59";
+  const token0Address = "0x609Bd169413359837E58AdC95bB5BB62E0cd520b";
+  const token1Address = "0x927A133eBE9daBf9DFf1b9834CA4415fe948AedC";
+  const poolAddress = "0xffE9A2E7D0b8C90fE86fF4dE06b2A66dD1D0eAFb";
   const swapRouterAddress = "0xE592427A0AEce92De3Edee1F18E0157C05861564";
-
-  const [owner] = await ethers.getSigners();
-  const SwanTreasuryFactory = await ethers.getContractFactory("SwanTreasury");
-  const SwanTreasury = await SwanTreasuryFactory.deploy();
-
-  await SwanTreasury.deployed();
-  console.log("SwanTreasury = ", SwanTreasury.address);
-
-  const SwanFactoryF = await ethers.getContractFactory("SwanFactory");
-  const SwanFactory = await SwanFactoryF.deploy(
-    SwanTreasury.address,
-    owner.address,
-    86400 * 10,
-    0
-  );
-  await SwanFactory.deployed();
-  console.log("SwanFactory = ", SwanFactory.address);
-
-  const t = await (
-    await SwanFactory.launchCustomTreasury(
-      token0Address,
-      token1Address,
-      poolAddress,
-      3000
-    )
-  ).wait();
-  console.log("t = ", t?.events && t?.events[0]?.args);
-
-  const customTreasuryInfo = await SwanFactory.allClones(owner.address, 0);
+  const customSwanTreasuryAddress =
+    "0x60d223F178205aB79C02a6Ab8e73C7B79C2C01C0";
 
   const customSwanTreasury = await ethers.getContractAt(
     "SwanTreasury",
-    customTreasuryInfo.customTreasury
+    customSwanTreasuryAddress
   );
-
-  const token0 = await ethers.getContractAt("ERC20Token", token0Address);
-  const token1 = await ethers.getContractAt("ERC20Token", token1Address);
-
-  console.log("approving to the swan treasury contract for deposit ...");
-  await (
-    await token0.approve(
-      customTreasuryInfo.customTreasury,
-      ethers.utils.parseEther("100")
-    )
-  ).wait();
-  await (
-    await token1.approve(
-      customTreasuryInfo.customTreasury,
-      ethers.utils.parseEther("100")
-    )
-  ).wait();
-
-  console.log("depositing ... ");
-  await (await customSwanTreasury.deposite(10, 10)).wait();
 
   console.log("swapping ... ");
   await (
-    await customSwanTreasury.uniswapv3(swapRouterAddress, token0Address, 5)
+    await customSwanTreasury.uniswapv3(swapRouterAddress, token1Address, 3)
   ).wait();
 }
 

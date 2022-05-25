@@ -19,6 +19,8 @@ task("accounts", "Prints the list of accounts", async (taskArgs, hre) => {
   }
 });
 
+const chainIds = { hardhat: 1 };
+
 // You need to export an object to set up your config
 // Go to https://hardhat.org/config/ to learn more
 
@@ -33,6 +35,13 @@ const config: HardhatUserConfig = {
     },
   },
   networks: {
+    hardhat: {
+      forking: {
+        url: "https://eth-mainnet.alchemyapi.io/v2/SvoX2WcZnGbRlL3ecuKW7blHjzlU5Se2",
+        blockNumber: 14840940,
+      },
+      chainId: chainIds.hardhat,
+    },
     kovan: {
       url: process.env.KOVAN_URL || "",
       accounts:
@@ -41,8 +50,11 @@ const config: HardhatUserConfig = {
   },
   etherscan: {
     apiKey: {
-      avalanche: process.env.ETHERSCAN_API_KEY,
+      kovan: process.env.ETHERSCAN_API_KEY,
     },
+  },
+  mocha: {
+    timeout: 2000000,
   },
 };
 
