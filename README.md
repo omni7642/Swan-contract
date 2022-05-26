@@ -5,7 +5,7 @@ The partners use the SwanFactory contract to clone their own CustomSwanTreasury 
 The partners then can pre inform 3 days before the end of the current epoch and can withdraw their funds back from the treasury.
 The Swaas instead take the fee from the treasury contract at the end of every epoch as much as 20% of the profit during the epoch.
 
-![](https://i2.paste.pics/H2YJQ.png)
+![](Swan%20contract.jpg)
 Try running some of the following tasks:
 
 ```shell
