@@ -28,16 +28,21 @@ contract SwanTreasury is ReentrancyGuard {
 
     uint256 public reserveA; // the tokenA amount of the contract
     uint256 public reserveB; // the tokenB amount of the contract
+    uint256 public currentValueA; // the actual value of the tokenA in the contract
+    uint256 public currentValueB; // the actual value of the tokenB in the contract
+    uint256 public epochStartValueA; // the tokenA value to USDC(10000 means 1USDC)
+    uint256 public epochStartValueB; // the tokenB value to USDC(10000 means 1USDC)
     uint256 public currentPreInformedAmountA; // current pre informed amount of tokenA
     uint256 public currentPreInformedAmountB; // current pre informed amount of tokenB
 
-    uint256 private lastFeeWithdrawedTime;
+    uint256 public lastFeeWithdrawedTime;
 
     // address public uniSwapRouter = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
 
-    event Deposite(address token, uint256 amount);
+    event Deposite(address token, uint256 amount, uint256 reserve);
     event PreInform(address token, uint256 amount);
-    event WithDraw(address token, uint256 amount);
+    event Withdraw(address token, uint256 amount, uint256 reserve);
+    event WithdrawFee(address token, uint256 amount, uint256 reserve);
     event UniswapV3Swap(ISwapRouter.ExactInputSingleParams params);
     event Update();
 
@@ -58,14 +63,8 @@ contract SwanTreasury is ReentrancyGuard {
     }
 
     modifier isInformable() {
-        uint256 periodToNextEpoch = ((block.timestamp - epochStart) /
-            epochDuration +
-            1) *
-            epochDuration +
-            epochStart -
-            block.timestamp;
         require(
-            periodToNextEpoch >= 86400 * 3,
+            periodToNextEpoch() >= 86400 * 3,
             "ERROR: it'a not informable after 3 days before the next epoch, do it the next epoch again"
         );
         _;
@@ -99,20 +98,25 @@ contract SwanTreasury is ReentrancyGuard {
         epochDuration = _epochDuration;
         epochStart = _epochStart;
         isInitialized = true;
+        lastFeeWithdrawedTime = getCurrentTime();
     }
 
     /// @notice deposite the token pair
-    function deposite(uint256 _amountA, uint256 _amountB) external onlyPartner {
-        IERC20(tokenA).transferFrom(msg.sender, address(this), _amountA);
-        IERC20(tokenB).transferFrom(msg.sender, address(this), _amountB);
-        if (_amountA > 0) {
-            reserveA = reserveA + _amountA;
-        }
-        if (_amountB > 0) {
-            reserveB = reserveB + _amountB;
-        }
-        emit Deposite(tokenA, _amountA);
-        emit Deposite(tokenB, _amountB);
+    function deposite(
+        uint256 _amountA,
+        uint256 _amountB,
+        uint256 _valueA,
+        uint256 _valueB
+    ) external onlyPartner {
+        if (_amountA > 0)
+            IERC20(tokenA).transferFrom(msg.sender, address(this), _amountA);
+        if (_amountB > 0)
+            IERC20(tokenB).transferFrom(msg.sender, address(this), _amountB);
+        update();
+        currentValueA += _amountA * _valueA;
+        currentValueB += _amountB * _valueB;
+        emit Deposite(tokenA, _amountA, reserveA);
+        emit Deposite(tokenB, _amountB, reserveB);
     }
 
     /// @notice preinform for the withdraw, need to be done before 3 days from the end of the current epoch
@@ -139,45 +143,73 @@ contract SwanTreasury is ReentrancyGuard {
     {
         if (amountA > 0) {
             require(amountA <= currentPreInformedAmountA, "ERR: amount exceed");
-            IERC20(tokenA).transferFrom(address(this), partner, amountA);
-            reserveA = reserveA - amountA;
+            IERC20(tokenA).transfer(partner, amountA);
             currentPreInformedAmountA = currentPreInformedAmountA - amountA;
+            currentValueA = (currentValueA * (reserveA - amountA)) / reserveA;
         }
         if (amountB > 0) {
             require(amountB <= currentPreInformedAmountB, "ERR: amount exceed");
-            IERC20(tokenB).transferFrom(address(this), partner, amountB);
+            IERC20(tokenB).transfer(partner, amountB);
             currentPreInformedAmountB = currentPreInformedAmountB - amountB;
+            currentValueB = (currentValueB * (reserveB - amountB)) / reserveB;
         }
-        emit WithDraw(tokenA, amountA);
-        emit WithDraw(tokenB, amountB);
+        update();
+        emit Withdraw(tokenA, amountA, reserveA);
+        emit Withdraw(tokenB, amountB, reserveB);
     }
 
     /// @notice withdraw the fee per epoch
-    function withdrawFee(address to) external onlyTrader nonReentrant {
-        (uint256 feeAmountA, uint256 feeAmountB) = calculateFee();
-        IERC20(tokenA).transfer(to, feeAmountA);
-        IERC20(tokenB).transfer(to, feeAmountB);
-        update();
+    function withdrawFee(
+        uint256 valueA,
+        uint256 valueB,
+        address mainToken,
+        address to
+    ) external onlyTrader nonReentrant {
+        (uint256 feeAmountA, uint256 feeAmountB) = calculateFee(
+            valueA,
+            valueB,
+            mainToken
+        );
+        if (feeAmountA > 0) IERC20(tokenA).transfer(to, feeAmountA);
+        if (feeAmountB > 0) IERC20(tokenB).transfer(to, feeAmountB);
+        if (feeAmountA > 0 || feeAmountB > 0) update();
+        lastFeeWithdrawedTime = getCurrentTime();
+        currentValueA = valueA * reserveA;
+        currentValueB = valueA * reserveB;
+        emit WithdrawFee(tokenA, feeAmountA, reserveA);
+        emit WithdrawFee(tokenB, feeAmountB, reserveB);
     }
 
     /// @notice calculate the fee from last withdrawed epoch
-    function calculateFee()
-        internal
-        view
-        returns (uint256 amountA, uint256 amountB)
-    {
-        uint256 currentTime = block.timestamp;
-        uint256 currentEpochStartTime = ((currentTime - epochStart) /
-            epochDuration) *
-            epochDuration +
-            epochStart;
+    function calculateFee(
+        uint256 valueA,
+        uint256 valueB,
+        address mainToken
+    ) internal view returns (uint256 amountA, uint256 amountB) {
+        uint256 _currentEpochStartTime = currentEpochStartTime();
         require(
-            currentEpochStartTime > lastFeeWithdrawedTime,
+            _currentEpochStartTime > lastFeeWithdrawedTime,
             "ERR: already withdrawed for the current epoch"
         );
-        // currently 20 percent fee
-        amountA = (reserveA * 20) / 100;
-        amountB = (reserveB * 20) / 100;
+        uint256 currentValue = reserveA * valueA + reserveB * valueB;
+        int256 profit = int256(currentValue) -
+            int256(currentValueA + currentValueB);
+        if (profit > 0) {
+            profit = (profit * 20) / 100;
+            if (mainToken == tokenA) {
+                amountA = uint256(profit) / valueA;
+                if (amountA > reserveA) {
+                    amountA = reserveA;
+                    amountB = (uint256(profit) - reserveA * valueA) / valueB;
+                }
+            } else if (mainToken == tokenB) {
+                amountB = uint256(profit) / valueB;
+                if (amountB > reserveB) {
+                    amountB = reserveB;
+                    amountA = (uint256(profit) - reserveB * valueB) / valueA;
+                }
+            }
+        }
     }
 
     /// @notice update the reserve amounts
@@ -187,15 +219,50 @@ contract SwanTreasury is ReentrancyGuard {
         emit Update();
     }
 
-    /// @notice just for general purposes, not use really
-    function trade(
-        address targetContract,
-        uint256 amount,
-        bytes calldata data
-    ) external onlyTrader {
-        (bool success, bytes memory data) = targetContract.call(data);
-        require(success, "trade failed");
+    /// @notice get the current epoch start time
+    function currentEpochStartTime()
+        public
+        view
+        returns (uint256 _currentEpochStartTime)
+    {
+        _currentEpochStartTime =
+            ((getCurrentTime() - epochStart) / epochDuration) *
+            epochDuration +
+            epochStart;
     }
+
+    /// @notice get current timestamp
+    function getCurrentTime()
+        internal
+        view
+        virtual
+        returns (uint256 currentTime)
+    {
+        currentTime = block.timestamp;
+    }
+
+    /// @notice get the left time to the next epoch start time
+    function periodToNextEpoch()
+        public
+        view
+        returns (uint256 _periodToNextEpoch)
+    {
+        _periodToNextEpoch =
+            ((getCurrentTime() - epochStart) / epochDuration + 1) *
+            epochDuration +
+            epochStart -
+            getCurrentTime();
+    }
+
+    // /// @notice just for general purposes, not use really, will be deleted
+    // function trade(
+    //     address targetContract,
+    //     uint256 amount,
+    //     bytes calldata data
+    // ) external onlyTrader {
+    //     (bool success, bytes memory data) = targetContract.call(data);
+    //     require(success, "trade failed");
+    // }
 
     /// @notice uniswap v3 swap trigger
     function uniswapv3(
@@ -210,7 +277,7 @@ contract SwanTreasury is ReentrancyGuard {
                 tokenOut: tokenIn == tokenA ? tokenB : tokenA,
                 fee: poolFee,
                 recipient: address(this),
-                deadline: block.timestamp,
+                deadline: getCurrentTime(),
                 amountIn: amountIn,
                 amountOutMinimum: 0,
                 sqrtPriceLimitX96: 0
