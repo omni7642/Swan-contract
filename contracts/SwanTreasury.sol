@@ -30,8 +30,6 @@ contract SwanTreasury is ReentrancyGuard {
     uint256 public reserveB; // the tokenB amount of the contract
     uint256 public currentValueA; // the actual value of the tokenA in the contract
     uint256 public currentValueB; // the actual value of the tokenB in the contract
-    uint256 public epochStartValueA; // the tokenA value to USDC(10000 means 1USDC)
-    uint256 public epochStartValueB; // the tokenB value to USDC(10000 means 1USDC)
     uint256 public currentPreInformedAmountA; // current pre informed amount of tokenA
     uint256 public currentPreInformedAmountB; // current pre informed amount of tokenB
 

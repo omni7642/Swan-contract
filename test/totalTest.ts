@@ -1,5 +1,4 @@
 import { expect } from "chai";
-import { sign } from "crypto";
 import { ethers } from "hardhat";
 import { getMaxTick, getMinTick } from "../scripts/ticks";
 import { encodePriceSqrt } from "../scripts/encodePriceSqrt";
@@ -13,10 +12,9 @@ import {
   SwanFactory,
   SwanTreasury,
 } from "../typechain";
-import { extendOwn } from "underscore";
 
 describe("test0", function () {
-  const UniswapV3FactoryAddress = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
+  // const UniswapV3FactoryAddress = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
   const positionManagerAddress = "0xC36442b4a4522E871399CD717aBDD847Ab11FE88";
   const swapRouterAddress = "0xE592427A0AEce92De3Edee1F18E0157C05861564";
 
