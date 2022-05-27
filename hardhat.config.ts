@@ -37,7 +37,7 @@ const config: HardhatUserConfig = {
   networks: {
     hardhat: {
       forking: {
-        url: "https://eth-mainnet.alchemyapi.io/v2/SvoX2WcZnGbRlL3ecuKW7blHjzlU5Se2",
+        url: process.env.ETHEREUM_NODE || "",
         blockNumber: 14840940,
       },
       chainId: chainIds.hardhat,
