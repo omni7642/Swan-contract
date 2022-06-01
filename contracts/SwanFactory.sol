@@ -1,6 +1,7 @@
 //SPDX-License-Identifier: Unlicense
 pragma solidity ^0.8.0;
 
+import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 import "hardhat/console.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./interfaces/ISwanTreasury.sol";
@@ -13,6 +14,9 @@ import "./interfaces/ISwanTreasury.sol";
 contract SwanFactory is Ownable {
     /// @dev the base swan treasury contract
     address public swanTreasuryTarget;
+
+    /// @notice the uniswap v3 core factory contract address
+    address public factory;
 
     /// @notice the swan trading algorithm wallet
     address private swanTrader;
@@ -34,15 +38,31 @@ contract SwanFactory is Ownable {
 
     /// @notice sets the target swanTreasury contract address
     constructor(
+        address _factory,
         address _swanTreasuryTarget,
         address _swanTrader,
         uint256 _epochDuration,
         uint256 _epochStart
     ) {
+        factory = _factory;
         swanTreasuryTarget = _swanTreasuryTarget;
         swanTrader = _swanTrader;
         epochDuration = _epochDuration;
         epochStart = _epochStart;
+    }
+
+    /// @notice the token pair v3 pool must exist
+    modifier poolExists(
+        address token0,
+        address token1,
+        uint24 fee
+    ) {
+        require(
+            IUniswapV3Factory(factory).getPool(token0, token1, fee) !=
+                address(0),
+            "Error: pool does not exist"
+        );
+        _;
     }
 
     /// @dev clones new minimul proxy (EIP1167)
@@ -73,7 +93,7 @@ contract SwanFactory is Ownable {
         address tokenA,
         address tokenB,
         uint24 poolFee
-    ) external returns (address) {
+    ) external poolExists(tokenA, tokenB, poolFee) returns (address) {
         address customTreasury = _clone(swanTreasuryTarget);
         TreasuryInfo memory newInfo = TreasuryInfo(
             customTreasury,
@@ -87,8 +107,9 @@ contract SwanFactory is Ownable {
             tokenA,
             tokenB,
             poolFee,
-            epochDuration,
-            epochStart
+            factory,
+            uint128(epochDuration),
+            uint128(epochStart)
         );
         emit NewCustomSwanTreasury(customTreasury, msg.sender);
         return customTreasury;

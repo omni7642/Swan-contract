@@ -1,6 +1,8 @@
 //SPDX-License-Identifier: Unlicense
 pragma solidity ^0.8.0;
 
+import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
+import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import "@uniswap/v3-periphery/contracts/libraries/TransferHelper.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
@@ -22,25 +24,26 @@ contract SwanTreasury is ReentrancyGuard {
     address public tokenA; // token0 first token of pair
     address public tokenB; // token1 second token of pair
     uint24 public poolFee; // the pool fee just to get the swap params
+    address public pool; // the uniswap v3 pool address
 
-    uint256 public epochDuration; // the swan trading epoch period
-    uint256 public epochStart; // the start time for calculating the epoch time
+    uint128 public epochDuration; // the swan trading epoch period
+    uint128 public epochStart; // the start time for calculating the epoch time
 
-    uint256 public reserveA; // the tokenA amount of the contract
-    uint256 public reserveB; // the tokenB amount of the contract
-    uint256 public currentValueA; // the actual value of the tokenA in the contract
-    uint256 public currentValueB; // the actual value of the tokenB in the contract
-    uint256 public currentPreInformedAmountA; // current pre informed amount of tokenA
-    uint256 public currentPreInformedAmountB; // current pre informed amount of tokenB
+    uint128 public reserveA; // the tokenA amount of the contract
+    uint128 public reserveB; // the tokenB amount of the contract
+    uint128 public depositAmountA; // the actual value of the tokenA in the contract
+    uint128 public depositAmountB; // the actual value of the tokenB in the contract
+    uint128 public currentPreInformedAmountA; // current pre informed amount of tokenA
+    uint128 public currentPreInformedAmountB; // current pre informed amount of tokenB
 
-    uint256 public lastFeeWithdrawedTime;
+    uint128 public lastFeeWithdrawedTime;
 
     // address public uniSwapRouter = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
 
-    event Deposite(address token, uint256 amount, uint256 reserve);
-    event PreInform(address token, uint256 amount);
-    event Withdraw(address token, uint256 amount, uint256 reserve);
-    event WithdrawFee(address token, uint256 amount, uint256 reserve);
+    event Deposite(address token, uint128 amount, uint128 reserve);
+    event PreInform(address token, uint128 amount);
+    event Withdraw(address token, uint128 amount, uint128 reserve);
+    event WithdrawFee(address token, uint128 amount, uint128 reserve);
     event UniswapV3Swap(ISwapRouter.ExactInputSingleParams params);
     event Update();
 
@@ -75,8 +78,9 @@ contract SwanTreasury is ReentrancyGuard {
         address _tokenA,
         address _tokenB,
         uint24 _poolFee,
-        uint256 _epochDuration,
-        uint256 _epochStart
+        address _factory,
+        uint128 _epochDuration,
+        uint128 _epochStart
     ) external {
         // For the base contract, itBase == true. Impossible to use.
         // if it's initialized once then it's not possible to use again
@@ -97,28 +101,24 @@ contract SwanTreasury is ReentrancyGuard {
         epochStart = _epochStart;
         isInitialized = true;
         lastFeeWithdrawedTime = getCurrentTime();
+        pool = IUniswapV3Factory(_factory).getPool(_tokenA, _tokenB, poolFee);
     }
 
     /// @notice deposite the token pair
-    function deposite(
-        uint256 _amountA,
-        uint256 _amountB,
-        uint256 _valueA,
-        uint256 _valueB
-    ) external onlyPartner {
+    function deposite(uint128 _amountA, uint128 _amountB) external onlyPartner {
         if (_amountA > 0)
             IERC20(tokenA).transferFrom(msg.sender, address(this), _amountA);
         if (_amountB > 0)
             IERC20(tokenB).transferFrom(msg.sender, address(this), _amountB);
         update();
-        currentValueA += _amountA * _valueA;
-        currentValueB += _amountB * _valueB;
+        depositAmountA += _amountA;
+        depositAmountB += _amountB;
         emit Deposite(tokenA, _amountA, reserveA);
         emit Deposite(tokenB, _amountB, reserveB);
     }
 
     /// @notice preinform for the withdraw, need to be done before 3 days from the end of the current epoch
-    function preInform(uint256 _amountA, uint256 _amountB)
+    function preInform(uint128 _amountA, uint128 _amountB)
         external
         onlyPartner
         isInformable
@@ -134,22 +134,22 @@ contract SwanTreasury is ReentrancyGuard {
     }
 
     /// @notice withdraw the token pair
-    function withdraw(uint256 amountA, uint256 amountB)
+    function withdraw(uint128 amountA, uint128 amountB)
         external
         onlyPartner
         nonReentrant
     {
         if (amountA > 0) {
             require(amountA <= currentPreInformedAmountA, "ERR: amount exceed");
-            IERC20(tokenA).transfer(partner, amountA);
             currentPreInformedAmountA = currentPreInformedAmountA - amountA;
-            currentValueA = (currentValueA * (reserveA - amountA)) / reserveA;
+            depositAmountA -= amountA;
+            IERC20(tokenA).transfer(partner, amountA);
         }
         if (amountB > 0) {
             require(amountB <= currentPreInformedAmountB, "ERR: amount exceed");
-            IERC20(tokenB).transfer(partner, amountB);
             currentPreInformedAmountB = currentPreInformedAmountB - amountB;
-            currentValueB = (currentValueB * (reserveB - amountB)) / reserveB;
+            depositAmountB -= amountB;
+            IERC20(tokenB).transfer(partner, amountB);
         }
         update();
         emit Withdraw(tokenA, amountA, reserveA);
@@ -157,54 +157,66 @@ contract SwanTreasury is ReentrancyGuard {
     }
 
     /// @notice withdraw the fee per epoch
-    function withdrawFee(
-        uint256 valueA,
-        uint256 valueB,
-        address mainToken,
-        address to
-    ) external onlyTrader nonReentrant {
-        (uint256 feeAmountA, uint256 feeAmountB) = calculateFee(
-            valueA,
-            valueB,
+    function withdrawFee(address mainToken, address to)
+        external
+        onlyTrader
+        nonReentrant
+    {
+        uint128 _price = price();
+        (uint128 feeAmountA, uint128 feeAmountB) = calculateFee(
+            _price,
+            ~uint64(0),
             mainToken
         );
         if (feeAmountA > 0) IERC20(tokenA).transfer(to, feeAmountA);
         if (feeAmountB > 0) IERC20(tokenB).transfer(to, feeAmountB);
         if (feeAmountA > 0 || feeAmountB > 0) update();
         lastFeeWithdrawedTime = getCurrentTime();
-        currentValueA = valueA * reserveA;
-        currentValueB = valueA * reserveB;
+        depositAmountA -= feeAmountA;
+        depositAmountB -= feeAmountB;
         emit WithdrawFee(tokenA, feeAmountA, reserveA);
         emit WithdrawFee(tokenB, feeAmountB, reserveB);
     }
 
     /// @notice calculate the fee from last withdrawed epoch
     function calculateFee(
-        uint256 valueA,
-        uint256 valueB,
+        uint128 valueA,
+        uint128 valueB,
         address mainToken
-    ) internal view returns (uint256 amountA, uint256 amountB) {
-        uint256 _currentEpochStartTime = currentEpochStartTime();
+    ) internal view returns (uint128 amountA, uint128 amountB) {
+        uint128 _currentEpochStartTime = currentEpochStartTime();
         require(
             _currentEpochStartTime > lastFeeWithdrawedTime,
             "ERR: already withdrawed for the current epoch"
         );
-        uint256 currentValue = reserveA * valueA + reserveB * valueB;
+        uint256 currentValue = uint256(reserveA) *
+            uint256(valueA) +
+            uint256(reserveB) *
+            uint256(valueB);
         int256 profit = int256(currentValue) -
-            int256(currentValueA + currentValueB);
+            int256(
+                uint256(depositAmountA) *
+                    uint256(valueA) +
+                    uint256(depositAmountB) *
+                    uint256(valueB)
+            );
         if (profit > 0) {
             profit = (profit * 20) / 100;
             if (mainToken == tokenA) {
-                amountA = uint256(profit) / valueA;
+                amountA = uint128(uint256(profit) / valueA);
                 if (amountA > reserveA) {
                     amountA = reserveA;
-                    amountB = (uint256(profit) - reserveA * valueA) / valueB;
+                    amountB = uint128(
+                        (uint256(profit) - reserveA * valueA) / valueB
+                    );
                 }
             } else if (mainToken == tokenB) {
-                amountB = uint256(profit) / valueB;
+                amountB = uint128(uint256(profit) / valueB);
                 if (amountB > reserveB) {
                     amountB = reserveB;
-                    amountA = (uint256(profit) - reserveB * valueB) / valueA;
+                    amountA = uint128(
+                        (uint256(profit) - reserveB * valueB) / valueA
+                    );
                 }
             }
         }
@@ -212,8 +224,8 @@ contract SwanTreasury is ReentrancyGuard {
 
     /// @notice update the reserve amounts
     function update() public {
-        reserveA = IERC20(tokenA).balanceOf(address(this));
-        reserveB = IERC20(tokenB).balanceOf(address(this));
+        reserveA = uint128(IERC20(tokenA).balanceOf(address(this)));
+        reserveB = uint128(IERC20(tokenB).balanceOf(address(this)));
         emit Update();
     }
 
@@ -221,7 +233,7 @@ contract SwanTreasury is ReentrancyGuard {
     function currentEpochStartTime()
         public
         view
-        returns (uint256 _currentEpochStartTime)
+        returns (uint128 _currentEpochStartTime)
     {
         _currentEpochStartTime =
             ((getCurrentTime() - epochStart) / epochDuration) *
@@ -234,22 +246,50 @@ contract SwanTreasury is ReentrancyGuard {
         internal
         view
         virtual
-        returns (uint256 currentTime)
+        returns (uint128 currentTime)
     {
-        currentTime = block.timestamp;
+        currentTime = uint128(block.timestamp);
     }
 
     /// @notice get the left time to the next epoch start time
     function periodToNextEpoch()
         public
         view
-        returns (uint256 _periodToNextEpoch)
+        returns (uint128 _periodToNextEpoch)
     {
         _periodToNextEpoch =
             ((getCurrentTime() - epochStart) / epochDuration + 1) *
             epochDuration +
             epochStart -
             getCurrentTime();
+    }
+
+    /// @notice the pool sqrtPriceX96
+    function sqrtPriceX96()
+        public
+        view
+        virtual
+        returns (uint160 _sqrtPriceX96)
+    {
+        (_sqrtPriceX96, , , , , , ) = IUniswapV3Pool(pool).slot0();
+    }
+
+    /// @notice the token0 price over token1 in uint128
+    /// The actual price follows the formula below
+    /// act_price = price / 2 ** 64;
+    /// it's scaled for calculating the actual value
+    function price() internal view returns (uint128 _price) {
+        uint160 sqrtPX96 = sqrtPriceX96();
+        require(
+            sqrtPX96 < ~uint128(0),
+            "The price is higher than the limit 2 ** 32"
+        );
+        require(
+            sqrtPX96 > ~uint64(0),
+            "The price is lower than the limit 2 ** -32"
+        );
+        uint64 sqrtPX32 = uint64(sqrtPX96 / ~uint64(0));
+        _price = uint128(sqrtPX32)**2;
     }
 
     // /// @notice just for general purposes, not use really, will be deleted
@@ -266,9 +306,9 @@ contract SwanTreasury is ReentrancyGuard {
     function uniswapv3(
         address uniSwapRouter,
         address tokenIn,
-        uint256 amountIn
+        uint128 amountIn
     ) external onlyTrader {
-        IERC20(tokenIn).approve(uniSwapRouter, amountIn);
+        IERC20(tokenIn).approve(uniSwapRouter, uint256(amountIn));
         ISwapRouter.ExactInputSingleParams memory params = ISwapRouter
             .ExactInputSingleParams({
                 tokenIn: tokenIn,
@@ -276,7 +316,7 @@ contract SwanTreasury is ReentrancyGuard {
                 fee: poolFee,
                 recipient: address(this),
                 deadline: getCurrentTime(),
-                amountIn: amountIn,
+                amountIn: uint256(amountIn),
                 amountOutMinimum: 0,
                 sqrtPriceLimitX96: 0
             });

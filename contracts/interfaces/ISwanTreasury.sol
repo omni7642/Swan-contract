@@ -8,7 +8,8 @@ interface ISwanTreasury {
         address _tokenA,
         address _tokenB,
         uint24 _poolFee,
-        uint256 _epochDuration,
-        uint256 _epochStart
+        address _factory,
+        uint128 _epochDuration,
+        uint128 _epochStart
     ) external;
 }

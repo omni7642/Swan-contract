@@ -6,6 +6,7 @@ import positionManagerabi from "../scripts/abis/NonfungiblePositionManager.json"
 import { SignerWithAddress } from "@nomiclabs/hardhat-ethers/signers";
 import { Contract } from "ethers";
 import { beforeEach, describe, it } from "mocha";
+import JSBI from "jsbi";
 import {
   ERC20Token,
   MockTreasury,
@@ -17,6 +18,7 @@ describe("test0", function () {
   // const UniswapV3FactoryAddress = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
   const positionManagerAddress = "0xC36442b4a4522E871399CD717aBDD847Ab11FE88";
   const swapRouterAddress = "0xE592427A0AEce92De3Edee1F18E0157C05861564";
+  const factoryAddress = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
 
   let token0: ERC20Token;
   let token1: ERC20Token;
@@ -41,12 +43,11 @@ describe("test0", function () {
     await SwanTreasury.deployed();
     // console.log("SwanTreasury = ", SwanTreasury.address);
 
-    currentTime = (
-      await ethers.provider.getBlock(await ethers.provider.getBlockNumber())
-    ).timestamp;
+    currentTime = Math.floor(Date.now() / 1000);
 
     const SwanFactoryF = await ethers.getContractFactory("SwanFactory");
     SwanFactory = await SwanFactoryF.deploy(
+      factoryAddress,
       SwanTreasury.address,
       trader.address,
       86400 * 90,
@@ -74,6 +75,56 @@ describe("test0", function () {
 
     // console.log("token0 = ", token0.address);
     // console.log("token1 = ", token1.address);
+
+    // console.log("token approving ...");
+    await (
+      await token0
+        .connect(partner)
+        .approve(positionManagerAddress, ethers.utils.parseEther("100"))
+    ).wait();
+    await (
+      await token1
+        .connect(partner)
+        .approve(positionManagerAddress, ethers.utils.parseEther("100"))
+    ).wait();
+
+    positionManager = await ethers.getContractAt(
+      positionManagerabi.abi,
+      positionManagerAddress
+    );
+
+    // console.log("create and initializing the new pool ... ");
+    await (
+      await positionManager.createAndInitializePoolIfNecessary(
+        token0.address,
+        token1.address,
+        3000,
+        encodePriceSqrt(1, 1)
+      )
+    ).wait();
+
+    currentTime = Math.floor(Date.now() / 1000);
+    // console.log("current timestamp = ", currentTime);
+    // console.log("min max tick = ", getMinTick(60), getMaxTick(60));
+    // console.log("creating new position ... ");
+    await (
+      await positionManager.connect(partner).mint({
+        token0: token0.address,
+        token1: token1.address,
+        fee: 3000,
+        tickLower: getMinTick(60),
+        tickUpper: getMaxTick(60),
+        amount0Desired: 10000000000,
+        amount1Desired: 10000000000,
+        amount0Min: 0,
+        amount1Min: 0,
+        recipient: partner.address,
+        deadline: currentTime + 100,
+      })
+    ).wait();
+
+    let nftbal = await positionManager.balanceOf(partner.address);
+    // console.log("nftbal = ", nftbal);
 
     // console.log("launching custom treasury ... ");
     const t = await (
@@ -104,9 +155,7 @@ describe("test0", function () {
 
     // console.log("depositing ... ");
     await (
-      await customSwanTreasury
-        .connect(partner)
-        .deposite(10000, 10000, 10000, 20000)
+      await customSwanTreasury.connect(partner).deposite(10000, 10000)
     ).wait();
 
     // console.log("updating ... ");
@@ -119,58 +168,6 @@ describe("test0", function () {
     await (
       await customSwanTreasury.setCurrentTime(Math.round(Date.now() / 1000))
     ).wait();
-
-    // console.log("token approving ...");
-    await (
-      await token0
-        .connect(partner)
-        .approve(positionManagerAddress, ethers.utils.parseEther("100"))
-    ).wait();
-    await (
-      await token1
-        .connect(partner)
-        .approve(positionManagerAddress, ethers.utils.parseEther("100"))
-    ).wait();
-
-    positionManager = await ethers.getContractAt(
-      positionManagerabi.abi,
-      positionManagerAddress
-    );
-
-    // console.log("create and initializing the new pool ... ");
-    await (
-      await positionManager.createAndInitializePoolIfNecessary(
-        token0.address,
-        token1.address,
-        3000,
-        encodePriceSqrt(1, 1)
-      )
-    ).wait();
-
-    currentTime = (
-      await ethers.provider.getBlock(await ethers.provider.getBlockNumber())
-    ).timestamp;
-    // console.log("current timestamp = ", currentTime);
-    // console.log("min max tick = ", getMinTick(60), getMaxTick(60));
-    // console.log("creating new position ... ");
-    await (
-      await positionManager.connect(partner).mint({
-        token0: token0.address,
-        token1: token1.address,
-        fee: 3000,
-        tickLower: getMinTick(60),
-        tickUpper: getMaxTick(60),
-        amount0Desired: 10000000000,
-        amount1Desired: 10000000000,
-        amount0Min: 0,
-        amount1Min: 0,
-        recipient: partner.address,
-        deadline: currentTime + 100,
-      })
-    ).wait();
-
-    let nftbal = await positionManager.balanceOf(partner.address);
-    // console.log("nftbal = ", nftbal);
   });
 
   describe("swap test", () => {
@@ -182,6 +179,7 @@ describe("test0", function () {
           token0.address,
           token1.address,
           3000,
+          factoryAddress,
           86400 * 90,
           currentTime
         )
@@ -198,6 +196,7 @@ describe("test0", function () {
           token0.address,
           token1.address,
           3000,
+          factoryAddress,
           86400 * 90,
           currentTime
         )
@@ -216,18 +215,14 @@ describe("test0", function () {
       let _reserveA = await customSwanTreasury.reserveA();
       let _reserveB = await customSwanTreasury.reserveB();
       await (
-        await customSwanTreasury
-          .connect(partner)
-          .deposite(0, 10000, 10000, 20000)
+        await customSwanTreasury.connect(partner).deposite(0, 10000)
       ).wait();
       let reserveA = await customSwanTreasury.reserveA();
       let reserveB = await customSwanTreasury.reserveB();
       expect(reserveA).to.be.eq(_reserveA);
       expect(reserveB).to.be.eq(_reserveB.add(10000));
       await (
-        await customSwanTreasury
-          .connect(partner)
-          .deposite(10000, 0, 10000, 20000)
+        await customSwanTreasury.connect(partner).deposite(10000, 0)
       ).wait();
       let __reserveA = await customSwanTreasury.reserveA();
       let __reserveB = await customSwanTreasury.reserveB();
@@ -237,9 +232,7 @@ describe("test0", function () {
 
     it("Basic test", async function () {
       // console.log("setting current time ... ");
-      currentTime = (
-        await ethers.provider.getBlock(await ethers.provider.getBlockNumber())
-      ).timestamp;
+      currentTime = Math.floor(Date.now() / 1000);
       // console.log("current timestamp = ", currentTime);
       await (await customSwanTreasury.setCurrentTime(currentTime + 10)).wait();
 
@@ -401,9 +394,7 @@ describe("test0", function () {
     });
 
     it("withdraw 20 percent of the profit", async () => {
-      currentTime = (
-        await ethers.provider.getBlock(await ethers.provider.getBlockNumber())
-      ).timestamp;
+      currentTime = Math.floor(Date.now() / 1000);
       await (await customSwanTreasury.setCurrentTime(currentTime + 10)).wait();
 
       let _reserveA = await customSwanTreasury.reserveA();
@@ -411,29 +402,34 @@ describe("test0", function () {
       await (
         await customSwanTreasury
           .connect(trader)
-          .uniswapv3(swapRouterAddress, token0.address, 3)
+          .uniswapv3(swapRouterAddress, token0.address, 3000)
       ).wait();
 
       let reserveA = await customSwanTreasury.reserveA();
       let reserveB = await customSwanTreasury.reserveB();
-      expect(reserveA).to.be.eq(_reserveA.sub(3));
-      expect(reserveB).to.be.eq(_reserveB.add(1));
+      expect(reserveA).to.be.eq(_reserveA.sub(3000));
+      expect(reserveB).to.be.eq(_reserveB.add(2990));
       await (
         await customSwanTreasury.setCurrentTime(currentTime + 86400 * 90)
+      ).wait();
+      // setting the current sqrtPriceX96 as 39614081257132168796771975168 = sqrt(0.25 * 2 ** 192)
+      await (
+        await customSwanTreasury.setCurrentPriceX96(
+          "39614081257132168796771975168"
+        )
       ).wait();
       await (
         await customSwanTreasury
           .connect(trader)
-          .withdrawFee(15000, 25000, token1.address, owner.address)
+          .withdrawFee(token1.address, owner.address)
       ).wait();
       reserveA = await customSwanTreasury.reserveA();
       reserveB = await customSwanTreasury.reserveB();
-      expect(reserveB.toNumber()).to.be.eq(9202);
+      expect(reserveB.toNumber()).to.be.eq(12543);
+      // expect(reserveA.toNumber()).to.be.eq(5209);
     });
     it("withdraw fails if not enough time", async () => {
-      currentTime = (
-        await ethers.provider.getBlock(await ethers.provider.getBlockNumber())
-      ).timestamp;
+      currentTime = Math.floor(Date.now() / 1000);
       await (await customSwanTreasury.setCurrentTime(currentTime + 10)).wait();
       await (
         await customSwanTreasury.setLastFeeWithdrawedTime(currentTime)
@@ -454,16 +450,22 @@ describe("test0", function () {
       await (
         await customSwanTreasury.setCurrentTime(currentTime + 86400 * 89)
       ).wait();
+
+      // setting the current sqrtPriceX96 as 56022770974786139918731938227 = sqrt(0.5 * 2 ** 192)
+      await (
+        await customSwanTreasury.setCurrentPriceX96(
+          "56022770974786139918731938227"
+        )
+      ).wait();
+
       await expect(
         customSwanTreasury
           .connect(trader)
-          .withdrawFee(15000, 25000, token1.address, owner.address)
+          .withdrawFee(token1.address, owner.address)
       ).to.be.revertedWith("ERR: already withdrawed for the current epoch");
     });
     it("withdraw fails if not trader", async () => {
-      currentTime = (
-        await ethers.provider.getBlock(await ethers.provider.getBlockNumber())
-      ).timestamp;
+      currentTime = Math.floor(Date.now() / 1000);
       await (await customSwanTreasury.setCurrentTime(currentTime + 10)).wait();
       await (
         await customSwanTreasury.setLastFeeWithdrawedTime(currentTime)
@@ -487,8 +489,17 @@ describe("test0", function () {
       await expect(
         customSwanTreasury
           .connect(addrs[0])
-          .withdrawFee(15000, 25000, token1.address, owner.address)
+          .withdrawFee(token1.address, owner.address)
       ).to.be.revertedWith("you're not the allowed trader");
+      // let sqrtPrice = await customSwanTreasury.sqrtPriceX96();
+      // console.log("sqrtPrice = ", sqrtPrice);
+      // const Q96 = JSBI.exponentiate(JSBI.BigInt(2), JSBI.BigInt(96));
+      // const Q192 = JSBI.exponentiate(Q96, JSBI.BigInt(2));
+      // let price = JSBI.divide(
+      //   JSBI.multiply(JSBI.BigInt(sqrtPrice), JSBI.BigInt(1)),
+      //   Q96
+      // );
+      // console.log("price = ", price.toString());
     });
   });
 });
