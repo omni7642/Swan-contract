@@ -21,6 +21,9 @@ contract SwanFactory is Ownable {
     /// @notice the swan trading algorithm wallet
     address private swanTrader;
 
+    /// @notice the fee receiver
+    address private to;
+
     /// @dev mapping to have a track of all the deployments (owner => clones[])
     mapping(address => TreasuryInfo[]) public allClones;
 
@@ -41,12 +44,14 @@ contract SwanFactory is Ownable {
         address _factory,
         address _swanTreasuryTarget,
         address _swanTrader,
+        address _to,
         uint256 _epochDuration,
         uint256 _epochStart
     ) {
         factory = _factory;
         swanTreasuryTarget = _swanTreasuryTarget;
         swanTrader = _swanTrader;
+        to = _to;
         epochDuration = _epochDuration;
         epochStart = _epochStart;
     }
@@ -92,7 +97,8 @@ contract SwanFactory is Ownable {
     function launchCustomTreasury(
         address tokenA,
         address tokenB,
-        uint24 poolFee
+        uint24 poolFee,
+        address mainToken
     ) external poolExists(tokenA, tokenB, poolFee) returns (address) {
         address customTreasury = _clone(swanTreasuryTarget);
         TreasuryInfo memory newInfo = TreasuryInfo(
@@ -104,9 +110,11 @@ contract SwanFactory is Ownable {
         ISwanTreasury(customTreasury).initialize(
             msg.sender,
             swanTrader,
+            to,
             tokenA,
             tokenB,
             poolFee,
+            mainToken,
             factory,
             uint128(epochDuration),
             uint128(epochStart)

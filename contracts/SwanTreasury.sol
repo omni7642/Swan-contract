@@ -6,6 +6,7 @@ import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import "@uniswap/v3-periphery/contracts/libraries/TransferHelper.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@chainlink/contracts/src/v0.8/KeeperCompatible.sol";
 import "./interfaces/ISwapRouter.sol";
 
 /**
@@ -13,7 +14,7 @@ import "./interfaces/ISwapRouter.sol";
  * @dev Uniswap trading interface
  * @author rock888
  */
-contract SwanTreasury is ReentrancyGuard {
+contract SwanTreasury is KeeperCompatibleInterface, ReentrancyGuard {
     // only to distinguish the cloned one
     bool public isBase;
     // prevents the already cloned one from re-initialize
@@ -21,6 +22,8 @@ contract SwanTreasury is ReentrancyGuard {
 
     address public partner; // the partner who deposits the funds
     address private swanTrader; // the trader who really do the trading
+    address private to; // fee receiver address
+    address private mainToken; // main fee token
     address public tokenA; // token0 first token of pair
     address public tokenB; // token1 second token of pair
     uint24 public poolFee; // the pool fee just to get the swap params
@@ -75,9 +78,11 @@ contract SwanTreasury is ReentrancyGuard {
     function initialize(
         address _partner,
         address _swanTrader,
+        address _to,
         address _tokenA,
         address _tokenB,
         uint24 _poolFee,
+        address _mainToken,
         address _factory,
         uint128 _epochDuration,
         uint128 _epochStart
@@ -92,11 +97,17 @@ contract SwanTreasury is ReentrancyGuard {
             isInitialized == false,
             "ERROR: This is already isInitialized. redo is not allowed"
         );
+        require(
+            _mainToken == _tokenA || _mainToken == _tokenB,
+            "ERROR: mainToken is not available"
+        );
         tokenA = _tokenA;
         partner = _partner;
         tokenB = _tokenB;
         poolFee = _poolFee;
+        mainToken = _mainToken;
         swanTrader = _swanTrader;
+        to = _to;
         epochDuration = _epochDuration;
         epochStart = _epochStart;
         isInitialized = true;
@@ -157,16 +168,15 @@ contract SwanTreasury is ReentrancyGuard {
     }
 
     /// @notice withdraw the fee per epoch
-    function withdrawFee(address mainToken, address to)
-        external
-        onlyTrader
-        nonReentrant
-    {
+    function withdrawFee() internal nonReentrant {
+        require(
+            currentEpochStartTime() > lastFeeWithdrawedTime,
+            "ERR: already withdrawed for the current epoch"
+        );
         uint128 _price = price();
         (uint128 feeAmountA, uint128 feeAmountB) = calculateFee(
             _price,
-            ~uint64(0),
-            mainToken
+            ~uint64(0)
         );
         if (feeAmountA > 0) IERC20(tokenA).transfer(to, feeAmountA);
         if (feeAmountB > 0) IERC20(tokenB).transfer(to, feeAmountB);
@@ -179,16 +189,11 @@ contract SwanTreasury is ReentrancyGuard {
     }
 
     /// @notice calculate the fee from last withdrawed epoch
-    function calculateFee(
-        uint128 valueA,
-        uint128 valueB,
-        address mainToken
-    ) internal view returns (uint128 amountA, uint128 amountB) {
-        uint128 _currentEpochStartTime = currentEpochStartTime();
-        require(
-            _currentEpochStartTime > lastFeeWithdrawedTime,
-            "ERR: already withdrawed for the current epoch"
-        );
+    function calculateFee(uint128 valueA, uint128 valueB)
+        internal
+        view
+        returns (uint128 amountA, uint128 amountB)
+    {
         uint256 currentValue = uint256(reserveA) *
             uint256(valueA) +
             uint256(reserveB) *
@@ -290,6 +295,26 @@ contract SwanTreasury is ReentrancyGuard {
         );
         uint64 sqrtPX32 = uint64(sqrtPX96 / ~uint64(0));
         _price = uint128(sqrtPX32)**2;
+    }
+
+    function checkUpkeep(
+        bytes calldata /* checkData */
+    )
+        external
+        view
+        override
+        returns (
+            bool upkeepNeeded,
+            bytes memory /* performData */
+        )
+    {
+        upkeepNeeded = currentEpochStartTime() > lastFeeWithdrawedTime;
+    }
+
+    function performUpkeep(
+        bytes calldata /* performData */
+    ) external override {
+        withdrawFee();
     }
 
     // /// @notice just for general purposes, not use really, will be deleted
