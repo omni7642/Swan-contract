@@ -21,9 +21,9 @@ contract SwanTreasury is KeeperCompatibleInterface, ReentrancyGuard {
     bool public isInitialized;
 
     address public partner; // the partner who deposits the funds
-    address private swanTrader; // the trader who really do the trading
-    address private to; // fee receiver address
-    address private mainToken; // main fee token
+    address public swanTrader; // the trader who really do the trading
+    address public to; // fee receiver address
+    address public mainToken; // main fee token
     address public tokenA; // token0 first token of pair
     address public tokenB; // token1 second token of pair
     uint24 public poolFee; // the pool fee just to get the swap params
@@ -39,7 +39,7 @@ contract SwanTreasury is KeeperCompatibleInterface, ReentrancyGuard {
     uint128 public currentPreInformedAmountA; // current pre informed amount of tokenA
     uint128 public currentPreInformedAmountB; // current pre informed amount of tokenB
 
-    uint128 public lastFeeWithdrawedTime;
+    uint128 public lastWithdrawedEpochStart;
 
     // address public uniSwapRouter = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
 
@@ -86,7 +86,7 @@ contract SwanTreasury is KeeperCompatibleInterface, ReentrancyGuard {
         address _factory,
         uint128 _epochDuration,
         uint128 _epochStart
-    ) external {
+    ) external virtual {
         // For the base contract, itBase == true. Impossible to use.
         // if it's initialized once then it's not possible to use again
         require(
@@ -111,7 +111,7 @@ contract SwanTreasury is KeeperCompatibleInterface, ReentrancyGuard {
         epochDuration = _epochDuration;
         epochStart = _epochStart;
         isInitialized = true;
-        lastFeeWithdrawedTime = getCurrentTime();
+        lastWithdrawedEpochStart = currentEpochStartTime();
         pool = IUniswapV3Factory(_factory).getPool(_tokenA, _tokenB, poolFee);
     }
 
@@ -145,45 +145,39 @@ contract SwanTreasury is KeeperCompatibleInterface, ReentrancyGuard {
     }
 
     /// @notice withdraw the token pair
-    function withdraw(uint128 amountA, uint128 amountB)
-        external
-        onlyPartner
-        nonReentrant
-    {
-        if (amountA > 0) {
-            require(amountA <= currentPreInformedAmountA, "ERR: amount exceed");
-            currentPreInformedAmountA = currentPreInformedAmountA - amountA;
-            depositAmountA -= amountA;
-            IERC20(tokenA).transfer(partner, amountA);
+    function withdraw() internal nonReentrant {
+        if (currentPreInformedAmountA > 0) {
+            depositAmountA -= currentPreInformedAmountA;
+            IERC20(tokenA).transfer(partner, currentPreInformedAmountA);
+            currentPreInformedAmountA = 0;
         }
-        if (amountB > 0) {
-            require(amountB <= currentPreInformedAmountB, "ERR: amount exceed");
-            currentPreInformedAmountB = currentPreInformedAmountB - amountB;
-            depositAmountB -= amountB;
-            IERC20(tokenB).transfer(partner, amountB);
+        if (currentPreInformedAmountB > 0) {
+            depositAmountB -= currentPreInformedAmountB;
+            IERC20(tokenB).transfer(partner, currentPreInformedAmountB);
+            currentPreInformedAmountB = 0;
         }
         update();
-        emit Withdraw(tokenA, amountA, reserveA);
-        emit Withdraw(tokenB, amountB, reserveB);
+        emit Withdraw(tokenA, currentPreInformedAmountA, reserveA);
+        emit Withdraw(tokenB, currentPreInformedAmountB, reserveB);
     }
 
     /// @notice withdraw the fee per epoch
     function withdrawFee() internal nonReentrant {
-        require(
-            currentEpochStartTime() > lastFeeWithdrawedTime,
-            "ERR: already withdrawed for the current epoch"
-        );
         uint128 _price = price();
         (uint128 feeAmountA, uint128 feeAmountB) = calculateFee(
             _price,
             ~uint64(0)
         );
-        if (feeAmountA > 0) IERC20(tokenA).transfer(to, feeAmountA);
-        if (feeAmountB > 0) IERC20(tokenB).transfer(to, feeAmountB);
+        if (feeAmountA > 0) {
+            IERC20(tokenA).transfer(to, feeAmountA);
+            depositAmountA -= feeAmountA;
+        }
+        if (feeAmountB > 0) {
+            IERC20(tokenB).transfer(to, feeAmountB);
+            depositAmountB -= feeAmountB;
+        }
         if (feeAmountA > 0 || feeAmountB > 0) update();
-        lastFeeWithdrawedTime = getCurrentTime();
-        depositAmountA -= feeAmountA;
-        depositAmountB -= feeAmountB;
+
         emit WithdrawFee(tokenA, feeAmountA, reserveA);
         emit WithdrawFee(tokenB, feeAmountB, reserveB);
     }
@@ -308,12 +302,22 @@ contract SwanTreasury is KeeperCompatibleInterface, ReentrancyGuard {
             bytes memory /* performData */
         )
     {
-        upkeepNeeded = currentEpochStartTime() > lastFeeWithdrawedTime;
+        // means the new epoch start time
+        upkeepNeeded =
+            (getCurrentTime() - lastWithdrawedEpochStart) > epochDuration;
     }
 
     function performUpkeep(
         bytes calldata /* performData */
     ) external override {
+        require(
+            (getCurrentTime() - lastWithdrawedEpochStart) > epochDuration,
+            "ERR: already withdrawed for the current epoch"
+        );
+        lastWithdrawedEpochStart = currentEpochStartTime();
+        if (currentPreInformedAmountA > 0 || currentPreInformedAmountB > 0) {
+            withdraw();
+        }
         withdrawFee();
     }
 

@@ -170,6 +170,7 @@ describe("test0", function () {
     await (
       await customSwanTreasury.setCurrentTime(Math.round(Date.now() / 1000))
     ).wait();
+    await (await customSwanTreasury.setLastWithdrawedEpochStart()).wait();
   });
 
   describe("swap test", () => {
@@ -298,7 +299,7 @@ describe("test0", function () {
       );
     });
 
-    it("preinform fails if zero token0/token1 amount", async () => {
+    it("preinform with zero token0/token1 amount", async () => {
       let currentContracTime = await customSwanTreasury.currentTime();
       await (
         await customSwanTreasury.setCurrentTime(
@@ -341,33 +342,7 @@ describe("test0", function () {
       );
     });
 
-    it("withdraw fails if it exceeds the preInformed amount", async () => {
-      let currentContracTime = await customSwanTreasury.currentTime();
-      await (
-        await customSwanTreasury.setCurrentTime(
-          currentContracTime.add(86400 * 85)
-        )
-      ).wait();
-      await (
-        await customSwanTreasury.connect(partner).preInform(100, 100)
-      ).wait();
-      expect(await customSwanTreasury.currentPreInformedAmountA()).to.be.eq(
-        100
-      );
-      expect(await customSwanTreasury.currentPreInformedAmountB()).to.be.eq(
-        100
-      );
-      await (
-        await customSwanTreasury.setCurrentTime(
-          currentContracTime.add(86400 * 90)
-        )
-      ).wait();
-      await expect(
-        customSwanTreasury.connect(partner).withdraw(200, 200)
-      ).to.be.revertedWith("ERR: amount exceed");
-    });
-
-    it("withdraw if the amount doesn't exceed the preinformed amount", async () => {
+    it("withdraw at the start of the next epoch", async () => {
       let currentContracTime = await customSwanTreasury.currentTime();
       await (
         await customSwanTreasury.setCurrentTime(
@@ -390,9 +365,13 @@ describe("test0", function () {
       ).wait();
       let _reserveA = await customSwanTreasury.reserveA();
       let _reserveB = await customSwanTreasury.reserveB();
+      // setting the current sqrtPriceX96 as 39614081257132168796771975168 = sqrt(0.25 * 2 ** 192)
       await (
-        await customSwanTreasury.connect(partner).withdraw(100, 100)
+        await customSwanTreasury.setCurrentPriceX96(
+          "39614081257132168796771975168"
+        )
       ).wait();
+      await (await customSwanTreasury.performUpkeep("0x")).wait();
       let reserveA = await customSwanTreasury.reserveA();
       let reserveB = await customSwanTreasury.reserveB();
       expect(reserveA).to.be.eq(_reserveA.sub(100));
@@ -400,9 +379,6 @@ describe("test0", function () {
     });
 
     it("withdraw fee 20 percent of the profit", async () => {
-      currentTime = Math.floor(Date.now() / 1000);
-      await (await customSwanTreasury.setCurrentTime(currentTime + 10)).wait();
-
       let _reserveA = await customSwanTreasury.reserveA();
       let _reserveB = await customSwanTreasury.reserveB();
       await (
@@ -424,11 +400,6 @@ describe("test0", function () {
           "39614081257132168796771975168"
         )
       ).wait();
-      // await (
-      //   await customSwanTreasury
-      //     .connect(trader)
-      //     .withdrawFee(token1.address, owner.address)
-      // ).wait();
       let [upkeepNeeded] = await customSwanTreasury.checkUpkeep("0x");
       expect(upkeepNeeded).to.be.eq(true);
       await (await customSwanTreasury.performUpkeep("0x")).wait();
@@ -437,12 +408,11 @@ describe("test0", function () {
       expect(reserveB.toNumber()).to.be.eq(12543);
       // expect(reserveA.toNumber()).to.be.eq(5209);
     });
+
     it("withdraw fee fails if not enough time", async () => {
       currentTime = Math.floor(Date.now() / 1000);
       await (await customSwanTreasury.setCurrentTime(currentTime + 10)).wait();
-      await (
-        await customSwanTreasury.setLastFeeWithdrawedTime(currentTime)
-      ).wait();
+      await (await customSwanTreasury.setLastWithdrawedEpochStart()).wait();
 
       let _reserveA = await customSwanTreasury.reserveA();
       let _reserveB = await customSwanTreasury.reserveB();
@@ -466,54 +436,95 @@ describe("test0", function () {
           "56022770974786139918731938227"
         )
       ).wait();
-
-      // await expect(
-      //   customSwanTreasury
-      //     .connect(trader)
-      //     .withdrawFee(token1.address, owner.address)
-      // ).to.be.revertedWith("ERR: already withdrawed for the current epoch");
       let [upkeepNeeded] = await customSwanTreasury.checkUpkeep("0x");
       expect(upkeepNeeded).to.be.eq(false);
       await expect(customSwanTreasury.performUpkeep("0x")).to.be.revertedWith(
         "ERR: already withdrawed for the current epoch"
       );
     });
-    it("withdraw fails if not trader", async () => {
-      currentTime = Math.floor(Date.now() / 1000);
-      await (await customSwanTreasury.setCurrentTime(currentTime + 10)).wait();
+
+    it("withdraw fee and partner withdraw at the start of the next epoch", async () => {
+      let currentContracTime = await customSwanTreasury.currentTime();
       await (
-        await customSwanTreasury.setLastFeeWithdrawedTime(currentTime)
+        await customSwanTreasury.setCurrentTime(
+          currentContracTime.add(86400 * 85)
+        )
       ).wait();
+      await (
+        await customSwanTreasury.connect(partner).preInform(100, 100)
+      ).wait();
+      expect(await customSwanTreasury.currentPreInformedAmountA()).to.be.eq(
+        100
+      );
+      expect(await customSwanTreasury.currentPreInformedAmountB()).to.be.eq(
+        100
+      );
 
       let _reserveA = await customSwanTreasury.reserveA();
       let _reserveB = await customSwanTreasury.reserveB();
       await (
         await customSwanTreasury
           .connect(trader)
-          .uniswapv3(swapRouterAddress, token0.address, 3)
+          .uniswapv3(swapRouterAddress, token0.address, 3000)
       ).wait();
 
       let reserveA = await customSwanTreasury.reserveA();
       let reserveB = await customSwanTreasury.reserveB();
-      expect(reserveA).to.be.eq(_reserveA.sub(3));
-      expect(reserveB).to.be.eq(_reserveB.add(1));
+      expect(reserveA).to.be.eq(_reserveA.sub(3000));
+      expect(reserveB).to.be.eq(_reserveB.add(2990));
       await (
         await customSwanTreasury.setCurrentTime(currentTime + 86400 * 90)
       ).wait();
-      // await expect(
-      //   customSwanTreasury
-      //     .connect(addrs[0])
-      //     .withdrawFee(token1.address, owner.address)
-      // ).to.be.revertedWith("you're not the allowed trader");
-      // let sqrtPrice = await customSwanTreasury.sqrtPriceX96();
-      // console.log("sqrtPrice = ", sqrtPrice);
-      // const Q96 = JSBI.exponentiate(JSBI.BigInt(2), JSBI.BigInt(96));
-      // const Q192 = JSBI.exponentiate(Q96, JSBI.BigInt(2));
-      // let price = JSBI.divide(
-      //   JSBI.multiply(JSBI.BigInt(sqrtPrice), JSBI.BigInt(1)),
-      //   Q96
-      // );
-      // console.log("price = ", price.toString());
+      // setting the current sqrtPriceX96 as 39614081257132168796771975168 = sqrt(0.25 * 2 ** 192)
+      await (
+        await customSwanTreasury.setCurrentPriceX96(
+          "39614081257132168796771975168"
+        )
+      ).wait();
+      let [upkeepNeeded] = await customSwanTreasury.checkUpkeep("0x");
+      expect(upkeepNeeded).to.be.eq(true);
+      await (await customSwanTreasury.performUpkeep("0x")).wait();
+      reserveA = await customSwanTreasury.reserveA();
+      reserveB = await customSwanTreasury.reserveB();
+      expect(reserveB.toNumber()).to.be.eq(12443);
+      // expect(reserveA.toNumber()).to.be.eq(5209);
     });
+    // it("withdraw fails if not trader", async () => {
+    //   currentTime = Math.floor(Date.now() / 1000);
+    //   await (await customSwanTreasury.setCurrentTime(currentTime + 10)).wait();
+    //   await (
+    //     await customSwanTreasury.setLastFeeWithdrawedTime(currentTime)
+    //   ).wait();
+
+    //   let _reserveA = await customSwanTreasury.reserveA();
+    //   let _reserveB = await customSwanTreasury.reserveB();
+    //   await (
+    //     await customSwanTreasury
+    //       .connect(trader)
+    //       .uniswapv3(swapRouterAddress, token0.address, 3)
+    //   ).wait();
+
+    //   let reserveA = await customSwanTreasury.reserveA();
+    //   let reserveB = await customSwanTreasury.reserveB();
+    //   expect(reserveA).to.be.eq(_reserveA.sub(3));
+    //   expect(reserveB).to.be.eq(_reserveB.add(1));
+    //   await (
+    //     await customSwanTreasury.setCurrentTime(currentTime + 86400 * 90)
+    //   ).wait();
+    //   // await expect(
+    //   //   customSwanTreasury
+    //   //     .connect(addrs[0])
+    //   //     .withdrawFee(token1.address, owner.address)
+    //   // ).to.be.revertedWith("you're not the allowed trader");
+    //   // let sqrtPrice = await customSwanTreasury.sqrtPriceX96();
+    //   // console.log("sqrtPrice = ", sqrtPrice);
+    //   // const Q96 = JSBI.exponentiate(JSBI.BigInt(2), JSBI.BigInt(96));
+    //   // const Q192 = JSBI.exponentiate(Q96, JSBI.BigInt(2));
+    //   // let price = JSBI.divide(
+    //   //   JSBI.multiply(JSBI.BigInt(sqrtPrice), JSBI.BigInt(1)),
+    //   //   Q96
+    //   // );
+    //   // console.log("price = ", price.toString());
+    // });
   });
 });
