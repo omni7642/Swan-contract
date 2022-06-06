@@ -117,13 +117,19 @@ contract SwanTreasury is KeeperCompatibleInterface, ReentrancyGuard {
 
     /// @notice deposite the token pair
     function deposite(uint128 _amountA, uint128 _amountB) external onlyPartner {
-        if (_amountA > 0)
+        require(
+            _amountA > 0 || _amountB > 0,
+            "Err: cannot deposit zero amount"
+        );
+        if (_amountA > 0) {
             IERC20(tokenA).transferFrom(msg.sender, address(this), _amountA);
-        if (_amountB > 0)
+            depositAmountA += _amountA;
+        }
+        if (_amountB > 0) {
             IERC20(tokenB).transferFrom(msg.sender, address(this), _amountB);
+            depositAmountB += _amountB;
+        }
         update();
-        depositAmountA += _amountA;
-        depositAmountB += _amountB;
         emit Deposite(tokenA, _amountA, reserveA);
         emit Deposite(tokenB, _amountB, reserveB);
     }
@@ -134,6 +140,10 @@ contract SwanTreasury is KeeperCompatibleInterface, ReentrancyGuard {
         onlyPartner
         isInformable
     {
+        require(
+            _amountA > 0 || _amountB > 0,
+            "Err: cannot preinform both zero amounts"
+        );
         if (_amountA > 0) {
             currentPreInformedAmountA = currentPreInformedAmountA + _amountA;
         }
