@@ -104,7 +104,6 @@ describe("test0", function () {
       )
     ).wait();
 
-    currentTime = Math.floor(Date.now() / 1000);
     // console.log("current timestamp = ", currentTime);
     // console.log("min max tick = ", getMinTick(60), getMaxTick(60));
     // console.log("creating new position ... ");
@@ -167,9 +166,7 @@ describe("test0", function () {
     // console.log("reserveA = ", reserveA, "\n", "reserveB = ", reserveB);
 
     // console.log("setting current time ... ");
-    await (
-      await customSwanTreasury.setCurrentTime(Math.round(Date.now() / 1000))
-    ).wait();
+    await (await customSwanTreasury.setCurrentTime(currentTime)).wait();
     await (await customSwanTreasury.setLastWithdrawedEpochStart()).wait();
   });
 
@@ -238,9 +235,6 @@ describe("test0", function () {
     });
 
     it("Basic test", async function () {
-      // console.log("setting current time ... ");
-      currentTime = Math.floor(Date.now() / 1000);
-      // console.log("current timestamp = ", currentTime);
       await (await customSwanTreasury.setCurrentTime(currentTime + 10)).wait();
 
       let _reserveA = await customSwanTreasury.reserveA();
@@ -360,7 +354,7 @@ describe("test0", function () {
       );
       await (
         await customSwanTreasury.setCurrentTime(
-          currentContracTime.add(86400 * 90)
+          currentContracTime.add(86400 * 90 + 1)
         )
       ).wait();
       let _reserveA = await customSwanTreasury.reserveA();
@@ -379,6 +373,7 @@ describe("test0", function () {
     });
 
     it("withdraw fee 20 percent of the profit", async () => {
+      let currentTime = await customSwanTreasury.currentTime();
       let _reserveA = await customSwanTreasury.reserveA();
       let _reserveB = await customSwanTreasury.reserveB();
       await (
@@ -392,7 +387,7 @@ describe("test0", function () {
       expect(reserveA).to.be.eq(_reserveA.sub(3000));
       expect(reserveB).to.be.eq(_reserveB.add(2990));
       await (
-        await customSwanTreasury.setCurrentTime(currentTime + 86400 * 90)
+        await customSwanTreasury.setCurrentTime(currentTime.add(86400 * 90 + 1))
       ).wait();
       // setting the current sqrtPriceX96 as 39614081257132168796771975168 = sqrt(0.25 * 2 ** 192)
       await (
@@ -473,7 +468,9 @@ describe("test0", function () {
       expect(reserveA).to.be.eq(_reserveA.sub(3000));
       expect(reserveB).to.be.eq(_reserveB.add(2990));
       await (
-        await customSwanTreasury.setCurrentTime(currentTime + 86400 * 90)
+        await customSwanTreasury.setCurrentTime(
+          currentContracTime.add(86400 * 90 + 1)
+        )
       ).wait();
       // setting the current sqrtPriceX96 as 39614081257132168796771975168 = sqrt(0.25 * 2 ** 192)
       await (
