@@ -485,6 +485,8 @@ describe("test0", function () {
       reserveB = await customSwanTreasury.reserveB();
       expect(reserveB.toNumber()).to.be.eq(12443);
       // expect(reserveA.toNumber()).to.be.eq(5209);
+      [upkeepNeeded] = await customSwanTreasury.checkUpkeep("0x");
+      expect(upkeepNeeded).to.be.eq(false);
     });
     // it("withdraw fails if not trader", async () => {
     //   currentTime = Math.floor(Date.now() / 1000);
